@@ -1,0 +1,1208 @@
+// BizOrbit database schema — single source of truth.
+// See AGENTS.md architecture blueprint §3 and §4 for the design principles
+// and entity model this file implements.
+//
+// Session/Account/Verification below are Better Auth's own tables, hand-written
+// to match better-auth@1.7.2's actual generated schema (@better-auth/core's
+// buildAuthTables) — its own CLI (@better-auth/cli) is deprecated/unmaintained
+// and hung on generation, so this was verified directly against the installed
+// package instead of trusted from training data or the CLI.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+enum Role {
+  SUPER_ADMIN
+  CEO
+  CTO
+  HR
+  MANAGER
+  EMPLOYEE
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  OFFBOARDED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+}
+
+enum WorkMode {
+  ONSITE
+  HYBRID
+  REMOTE
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+  HOLIDAY
+  WEEKEND
+  PENDING_REGULARISATION
+}
+
+enum AttendanceSource {
+  WEB
+  MOBILE_WEB
+  MANUAL_ENTRY
+  SYSTEM
+}
+
+enum BreakType {
+  LUNCH
+  SHORT
+  MEETING
+  PERSONAL
+  OTHER
+}
+
+enum LeaveAccrualMethod {
+  ANNUAL_UPFRONT
+  MONTHLY_ACCRUAL
+  NONE
+}
+
+enum HalfDaySession {
+  FIRST_HALF
+  SECOND_HALF
+}
+
+enum LeaveRequestStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  WITHDRAWN
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+  SKIPPED
+  DELEGATED
+}
+
+enum HolidayType {
+  PUBLIC
+  COMPANY
+  OPTIONAL
+  RESTRICTED
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectMemberRole {
+  LEAD
+  MEMBER
+}
+
+enum SalesTargetMetric {
+  REVENUE
+  UNITS
+  DEALS
+}
+
+enum SalesTargetPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+enum SalesTargetStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum SaleStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  BLOCKED
+  DONE
+  CANCELLED
+}
+
+enum TaskActivityType {
+  CREATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  DUE_DATE_CHANGED
+  COMMENTED
+  ATTACHMENT_ADDED
+  CANCELLED
+}
+
+enum NotificationCategory {
+  ATTENDANCE
+  LEAVE_REQUEST
+  LEAVE_DECISION
+  TASK_ASSIGNED
+  TASK_DUE
+  TASK_COMMENT
+  ANNOUNCEMENT
+  SECURITY
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DigestFrequency {
+  IMMEDIATE
+  DAILY
+  WEEKLY
+  NEVER
+}
+
+enum EmailOutboxStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  DEAD
+}
+
+enum AuditSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// ============================================================
+// Identity & organisation
+// ============================================================
+
+model Company {
+  id              String   @id @default(uuid())
+  name            String
+  slug            String   @unique
+  logoUrl         String?
+  timezone        String   @default("Asia/Kolkata")
+  weekStartsOn    Weekday  @default(MONDAY)
+  fiscalYearStart Int      @default(4) // 1-12, month index
+  defaultCurrency String   @default("INR")
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  departments             Department[]
+  designations            Designation[]
+  officeLocations         OfficeLocation[]
+  users                   User[]
+  attendanceRecords       AttendanceRecord[]
+  attendancePolicies      AttendancePolicy[]
+  leaveTypes              LeaveType[]
+  leaveBalances           LeaveBalance[]
+  leaveRequests           LeaveRequest[]
+  leaveApprovals          LeaveApproval[]
+  holidays                Holiday[]
+  breakSessions           BreakSession[]
+  projects                Project[]
+  projectMembers          ProjectMember[]
+  projectUpdates          ProjectUpdate[]
+  products                Product[]
+  productAssignments      ProductAssignment[]
+  salesTargets            SalesTarget[]
+  sales                   Sale[]
+  tasks                   Task[]
+  taskAssignments         TaskAssignment[]
+  taskComments            TaskComment[]
+  taskAttachments         TaskAttachment[]
+  taskActivities          TaskActivity[]
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
+  emailOutbox             EmailOutbox[]
+  auditLogs               AuditLog[]
+  settings                CompanySettings[]
+
+  @@map("companies")
+}
+
+model Department {
+  id                 String    @id @default(uuid())
+  companyId          String
+  name               String
+  code               String
+  description        String?
+  headUserId         String?
+  parentDepartmentId String?
+  deletedAt          DateTime? @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
+
+  company            Company            @relation(fields: [companyId], references: [id])
+  headUser           User?              @relation("DepartmentHead", fields: [headUserId], references: [id])
+  parentDepartment   Department?        @relation("SubDepartments", fields: [parentDepartmentId], references: [id])
+  subDepartments     Department[]       @relation("SubDepartments")
+  designations       Designation[]
+  employees          User[]             @relation("DepartmentEmployees")
+  tasks              Task[]
+  attendancePolicies AttendancePolicy[]
+  salesTargets       SalesTarget[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([headUserId])
+  @@index([parentDepartmentId])
+  @@map("departments")
+}
+
+model Designation {
+  id           String   @id @default(uuid())
+  companyId    String
+  title        String
+  code         String
+  level        Int
+  departmentId String?
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  employees  User[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([departmentId])
+  @@map("designations")
+}
+
+model OfficeLocation {
+  id                   String   @id @default(uuid())
+  companyId            String
+  name                 String
+  addressLine1         String
+  addressLine2         String?
+  city                 String
+  state                String
+  country              String
+  postalCode           String
+  latitude             Decimal  @db.Decimal(10, 7)
+  longitude            Decimal  @db.Decimal(10, 7)
+  geofenceRadiusMeters Int      @default(150)
+  timezone             String
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(6)
+
+  company             Company            @relation(fields: [companyId], references: [id])
+  primaryEmployees    User[]
+  attendanceClockIns  AttendanceRecord[] @relation("ClockInOffice")
+  attendanceClockOuts AttendanceRecord[] @relation("ClockOutOffice")
+
+  @@index([companyId])
+  @@map("office_locations")
+}
+
+model User {
+  id                    String         @id @default(uuid())
+  companyId             String
+  email                 String         @unique
+  emailVerified         Boolean        @default(false)
+  twoFactorEnabled      Boolean        @default(false)
+  // Better Auth's core field — kept in sync with firstName+lastName in application code.
+  name                  String
+  role                  Role           @default(EMPLOYEE)
+  status                UserStatus     @default(INVITED)
+  firstName             String
+  lastName              String
+  employeeCode          String         @unique
+  avatarUrl             String?
+  phone                 String?
+  dateOfBirth           DateTime?      @db.Date
+  dateOfJoining         DateTime?      @db.Date
+  dateOfLeaving         DateTime?      @db.Date
+  departmentId          String?
+  designationId         String?
+  managerId             String?
+  primaryOfficeId       String?
+  employmentType        EmploymentType @default(FULL_TIME)
+  workMode              WorkMode       @default(ONSITE)
+  address               String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  deletedAt             DateTime?      @db.Timestamptz(6)
+  createdAt             DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(6)
+
+  company       Company         @relation(fields: [companyId], references: [id])
+  department    Department?     @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  designation   Designation?    @relation(fields: [designationId], references: [id])
+  manager       User?           @relation("ManagerReports", fields: [managerId], references: [id])
+  directReports User[]          @relation("ManagerReports")
+  primaryOffice OfficeLocation? @relation(fields: [primaryOfficeId], references: [id])
+
+  headOfDepartments Department[] @relation("DepartmentHead")
+
+  attendanceRecords         AttendanceRecord[]       @relation("AttendanceOwner")
+  attendanceApprovals       AttendanceRecord[]       @relation("AttendanceApprovedBy")
+  leaveBalances             LeaveBalance[]
+  leaveRequests             LeaveRequest[]
+  leaveApprovalsAsApprover  LeaveApproval[]          @relation("LeaveApprovalsAsApprover")
+  leaveApprovalsDelegatedTo LeaveApproval[]          @relation("LeaveApprovalsDelegatedTo")
+  projectsOwned             Project[]                @relation("ProjectsOwned")
+  projectsCreated           Project[]                @relation("ProjectsCreated")
+  projectMemberships        ProjectMember[]          @relation("ProjectMemberships")
+  projectUpdatesAuthored    ProjectUpdate[]          @relation("ProjectUpdatesAuthored")
+  productAssignments        ProductAssignment[]      @relation("ProductAssignments")
+  salesTargetsAssigned      SalesTarget[]            @relation("SalesTargetsAssigned")
+  salesTargetsCreated       SalesTarget[]            @relation("SalesTargetsCreated")
+  salesRecorded             Sale[]                   @relation("SalesRecorded")
+  salesApproved             Sale[]                   @relation("SalesApproved")
+  tasksCreated              Task[]                   @relation("TasksCreated")
+  taskAssignmentsAsAssignee TaskAssignment[]         @relation("TaskAssignmentsAsAssignee")
+  taskAssignmentsAssignedBy TaskAssignment[]         @relation("TaskAssignmentsAssignedBy")
+  taskCommentsAuthored      TaskComment[]            @relation("TaskCommentsAuthored")
+  taskAttachmentsUploaded   TaskAttachment[]         @relation("TaskAttachmentsUploaded")
+  taskActivitiesActed       TaskActivity[]           @relation("TaskActivitiesActed")
+  notifications             Notification[]
+  notificationPreferences   NotificationPreference[]
+  auditLogsAsActor          AuditLog[]               @relation("AuditLogsAsActor")
+
+  sessions   Session[]
+  accounts   Account[]
+  twoFactors TwoFactor[]
+
+  @@index([companyId])
+  @@index([departmentId])
+  @@index([designationId])
+  @@index([managerId])
+  @@index([primaryOfficeId])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+// ============================================================
+// Attendance
+// ============================================================
+
+model AttendanceRecord {
+  id                     String           @id @default(uuid())
+  companyId              String
+  userId                 String
+  workDate               DateTime         @db.Date
+  status                 AttendanceStatus @default(PENDING_REGULARISATION)
+  clockInAt              DateTime?        @db.Timestamptz(6)
+  clockOutAt             DateTime?        @db.Timestamptz(6)
+  totalWorkMinutes       Int?
+  totalBreakMinutes      Int?
+  netWorkMinutes         Int?
+  isLate                 Boolean          @default(false)
+  lateByMinutes          Int?
+  isEarlyDeparture       Boolean          @default(false)
+  earlyByMinutes         Int?
+  isOvertime             Boolean          @default(false)
+  overtimeMinutes        Int?
+  clockInLatitude        Decimal?         @db.Decimal(10, 7)
+  clockInLongitude       Decimal?         @db.Decimal(10, 7)
+  clockInAccuracyMeters  Decimal?         @db.Decimal(8, 2)
+  clockInOfficeId        String?
+  clockInDistanceMeters  Decimal?         @db.Decimal(10, 2)
+  clockInWithinGeofence  Boolean?
+  clockOutLatitude       Decimal?         @db.Decimal(10, 7)
+  clockOutLongitude      Decimal?         @db.Decimal(10, 7)
+  clockOutAccuracyMeters Decimal?         @db.Decimal(8, 2)
+  clockOutOfficeId       String?
+  clockOutDistanceMeters Decimal?         @db.Decimal(10, 2)
+  clockOutWithinGeofence Boolean?
+  clockInIpAddress       String?
+  clockOutIpAddress      String?
+  clockInDeviceInfo      Json?
+  clockOutDeviceInfo     Json?
+  source                 AttendanceSource @default(WEB)
+  isFlagged              Boolean          @default(false)
+  flagReason             String?
+  regularisationNote     String?
+  approvedById           String?
+  approvedAt             DateTime?        @db.Timestamptz(6)
+  createdAt              DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime         @updatedAt @db.Timestamptz(6)
+
+  company        Company         @relation(fields: [companyId], references: [id])
+  user           User            @relation("AttendanceOwner", fields: [userId], references: [id])
+  approvedBy     User?           @relation("AttendanceApprovedBy", fields: [approvedById], references: [id])
+  clockInOffice  OfficeLocation? @relation("ClockInOffice", fields: [clockInOfficeId], references: [id])
+  clockOutOffice OfficeLocation? @relation("ClockOutOffice", fields: [clockOutOfficeId], references: [id])
+  breakSessions  BreakSession[]
+
+  @@unique([userId, workDate])
+  @@index([companyId])
+  @@index([userId])
+  @@index([workDate])
+  @@index([status])
+  @@index([isFlagged])
+  @@index([clockInOfficeId])
+  @@index([clockOutOfficeId])
+  @@map("attendance_records")
+}
+
+model BreakSession {
+  id                 String    @id @default(uuid())
+  companyId          String
+  attendanceRecordId String
+  type               BreakType @default(SHORT)
+  startedAt          DateTime  @db.Timestamptz(6)
+  endedAt            DateTime? @db.Timestamptz(6)
+  durationMinutes    Int?
+  startLatitude      Decimal?  @db.Decimal(10, 7)
+  startLongitude     Decimal?  @db.Decimal(10, 7)
+  note               String?
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
+
+  company          Company          @relation(fields: [companyId], references: [id])
+  attendanceRecord AttendanceRecord @relation(fields: [attendanceRecordId], references: [id])
+
+  @@index([companyId])
+  @@index([attendanceRecordId])
+  @@map("break_sessions")
+}
+
+model AttendancePolicy {
+  id                       String    @id @default(uuid())
+  companyId                String
+  name                     String
+  isDefault                Boolean   @default(false)
+  shiftStartTime           String // "HH:mm", office-local time
+  shiftEndTime             String // "HH:mm", office-local time
+  graceMinutes             Int       @default(15)
+  minFullDayMinutes        Int       @default(480)
+  minHalfDayMinutes        Int       @default(240)
+  maxBreakMinutesPerDay    Int       @default(60)
+  workingDays              Weekday[]
+  requireGeofence          Boolean   @default(true)
+  allowRemoteClockIn       Boolean   @default(false)
+  requirePhotoOnClockIn    Boolean   @default(false)
+  autoClockOutAfterMinutes Int?
+  overtimeEnabled          Boolean   @default(false)
+  appliesToDepartmentId    String?
+  createdAt                DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime  @updatedAt @db.Timestamptz(6)
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  department Department? @relation(fields: [appliesToDepartmentId], references: [id])
+
+  @@index([companyId])
+  @@index([appliesToDepartmentId])
+  @@map("attendance_policies")
+}
+
+// ============================================================
+// Leave
+// ============================================================
+
+model LeaveType {
+  id                        String             @id @default(uuid())
+  companyId                 String
+  name                      String
+  code                      String
+  colorHex                  String             @default("#ed7014")
+  isPaid                    Boolean            @default(true)
+  annualQuotaDays           Decimal            @db.Decimal(4, 1)
+  accrualMethod             LeaveAccrualMethod @default(ANNUAL_UPFRONT)
+  allowCarryForward         Boolean            @default(false)
+  maxCarryForwardDays       Decimal?           @db.Decimal(4, 1)
+  requiresDocumentAfterDays Int?
+  minNoticeDays             Int                @default(0)
+  maxConsecutiveDays        Int?
+  allowHalfDay              Boolean            @default(true)
+  deductsFromBalance        Boolean            @default(true)
+  isActive                  Boolean            @default(true)
+  createdAt                 DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime           @updatedAt @db.Timestamptz(6)
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  leaveBalances LeaveBalance[]
+  leaveRequests LeaveRequest[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("leave_types")
+}
+
+model LeaveBalance {
+  id                 String   @id @default(uuid())
+  companyId          String
+  userId             String
+  leaveTypeId        String
+  year               Int
+  allocatedDays      Decimal  @default(0) @db.Decimal(4, 1)
+  carriedForwardDays Decimal  @default(0) @db.Decimal(4, 1)
+  usedDays           Decimal  @default(0) @db.Decimal(4, 1)
+  pendingDays        Decimal  @default(0) @db.Decimal(4, 1)
+  encashedDays       Decimal  @default(0) @db.Decimal(4, 1)
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(6)
+
+  company   Company   @relation(fields: [companyId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([userId, leaveTypeId, year])
+  @@index([companyId])
+  @@index([userId])
+  @@index([leaveTypeId])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id                   String             @id @default(uuid())
+  companyId            String
+  userId               String
+  leaveTypeId          String
+  startDate            DateTime           @db.Date
+  endDate              DateTime           @db.Date
+  isHalfDay            Boolean            @default(false)
+  halfDaySession       HalfDaySession?
+  totalDays            Decimal            @db.Decimal(4, 1)
+  reason               String?
+  contactDuringLeave   String?
+  documentUrl          String?
+  status               LeaveRequestStatus @default(DRAFT)
+  currentApprovalStage Int                @default(1)
+  appliedAt            DateTime?          @db.Timestamptz(6)
+  finalDecisionAt      DateTime?          @db.Timestamptz(6)
+  cancellationReason   String?
+  createdAt            DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(6)
+
+  company   Company         @relation(fields: [companyId], references: [id])
+  user      User            @relation(fields: [userId], references: [id])
+  leaveType LeaveType       @relation(fields: [leaveTypeId], references: [id])
+  approvals LeaveApproval[]
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([leaveTypeId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+  @@map("leave_requests")
+}
+
+model LeaveApproval {
+  id             String           @id @default(uuid())
+  companyId      String
+  leaveRequestId String
+  approverId     String
+  stage          Int
+  role           Role
+  decision       ApprovalDecision @default(PENDING)
+  comment        String?
+  decidedAt      DateTime?        @db.Timestamptz(6)
+  delegatedToId  String?
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
+
+  company      Company      @relation(fields: [companyId], references: [id])
+  leaveRequest LeaveRequest @relation(fields: [leaveRequestId], references: [id])
+  approver     User         @relation("LeaveApprovalsAsApprover", fields: [approverId], references: [id])
+  delegatedTo  User?        @relation("LeaveApprovalsDelegatedTo", fields: [delegatedToId], references: [id])
+
+  @@unique([leaveRequestId, stage])
+  @@index([companyId])
+  @@index([approverId])
+  @@index([delegatedToId])
+  @@index([decision])
+  @@map("leave_approvals")
+}
+
+model Holiday {
+  id                 String      @id @default(uuid())
+  companyId          String
+  name               String
+  date               DateTime    @db.Date
+  type               HolidayType @default(PUBLIC)
+  description        String?
+  appliesToOfficeIds String[]
+  isRecurring        Boolean     @default(false)
+  createdAt          DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime    @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([date])
+  @@map("holidays")
+}
+
+// ============================================================
+// Projects
+// ============================================================
+
+model Project {
+  id          String        @id @default(uuid())
+  companyId   String
+  name        String
+  code        String
+  description String?
+  status      ProjectStatus @default(PLANNING)
+  ownerId     String
+  createdById String
+  startDate   DateTime?     @db.Date
+  endDate     DateTime?     @db.Date
+  deletedAt   DateTime?     @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+
+  company   Company         @relation(fields: [companyId], references: [id])
+  owner     User            @relation("ProjectsOwned", fields: [ownerId], references: [id])
+  createdBy User            @relation("ProjectsCreated", fields: [createdById], references: [id])
+  members   ProjectMember[]
+  tasks     Task[]
+  updates   ProjectUpdate[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([status])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String            @id @default(uuid())
+  companyId String
+  projectId String
+  userId    String
+  role      ProjectMemberRole @default(MEMBER)
+  addedAt   DateTime          @default(now()) @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation("ProjectMemberships", fields: [userId], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([companyId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+/**
+ * A lightweight status/progress post — "Week 3: on track" — not a full activity log.
+ */
+model ProjectUpdate {
+  id        String        @id @default(uuid())
+  companyId String
+  projectId String
+  authorId  String
+  status    ProjectStatus
+  body      String
+  createdAt DateTime      @default(now()) @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  author  User    @relation("ProjectUpdatesAuthored", fields: [authorId], references: [id])
+
+  @@index([companyId])
+  @@index([projectId])
+  @@map("project_updates")
+}
+
+// ============================================================
+// Tasks
+// ============================================================
+
+model Task {
+  id               String       @id @default(uuid())
+  companyId        String
+  title            String
+  description      String?
+  createdById      String
+  departmentId     String?
+  projectId        String?
+  parentTaskId     String?
+  priority         TaskPriority @default(MEDIUM)
+  status           TaskStatus   @default(BACKLOG)
+  startDate        DateTime?    @db.Date
+  dueDate          DateTime?    @db.Date
+  completedAt      DateTime?    @db.Timestamptz(6)
+  estimatedMinutes Int?
+  actualMinutes    Int?
+  progressPercent  Int          @default(0)
+  tags             String[]
+  deletedAt        DateTime?    @db.Timestamptz(6)
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+
+  company     Company          @relation(fields: [companyId], references: [id])
+  createdBy   User             @relation("TasksCreated", fields: [createdById], references: [id])
+  department  Department?      @relation(fields: [departmentId], references: [id])
+  project     Project?         @relation(fields: [projectId], references: [id])
+  parentTask  Task?            @relation("SubTasks", fields: [parentTaskId], references: [id])
+  subTasks    Task[]           @relation("SubTasks")
+  assignments TaskAssignment[]
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+  activities  TaskActivity[]
+
+  @@index([companyId])
+  @@index([createdById])
+  @@index([departmentId])
+  @@index([projectId])
+  @@index([parentTaskId])
+  @@index([status])
+  @@index([priority])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model TaskAssignment {
+  id           String   @id @default(uuid())
+  companyId    String
+  taskId       String
+  assigneeId   String
+  assignedById String
+  assignedAt   DateTime @default(now()) @db.Timestamptz(6)
+  isPrimary    Boolean  @default(false)
+
+  company    Company @relation(fields: [companyId], references: [id])
+  task       Task    @relation(fields: [taskId], references: [id])
+  assignee   User    @relation("TaskAssignmentsAsAssignee", fields: [assigneeId], references: [id])
+  assignedBy User    @relation("TaskAssignmentsAssignedBy", fields: [assignedById], references: [id])
+
+  @@unique([taskId, assigneeId])
+  @@index([companyId])
+  @@index([assigneeId])
+  @@index([assignedById])
+  @@map("task_assignments")
+}
+
+model TaskComment {
+  id               String    @id @default(uuid())
+  companyId        String
+  taskId           String
+  authorId         String
+  body             String
+  parentCommentId  String?
+  mentionedUserIds String[]
+  editedAt         DateTime? @db.Timestamptz(6)
+  deletedAt        DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  task          Task             @relation(fields: [taskId], references: [id])
+  author        User             @relation("TaskCommentsAuthored", fields: [authorId], references: [id])
+  parentComment TaskComment?     @relation("CommentReplies", fields: [parentCommentId], references: [id])
+  replies       TaskComment[]    @relation("CommentReplies")
+  attachments   TaskAttachment[]
+
+  @@index([companyId])
+  @@index([taskId])
+  @@index([authorId])
+  @@index([parentCommentId])
+  @@map("task_comments")
+}
+
+model TaskAttachment {
+  id           String   @id @default(uuid())
+  companyId    String
+  taskId       String?
+  commentId    String?
+  uploadedById String
+  fileName     String
+  fileKey      String
+  fileUrl      String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  company    Company      @relation(fields: [companyId], references: [id])
+  task       Task?        @relation(fields: [taskId], references: [id])
+  comment    TaskComment? @relation(fields: [commentId], references: [id])
+  uploadedBy User         @relation("TaskAttachmentsUploaded", fields: [uploadedById], references: [id])
+
+  @@index([companyId])
+  @@index([taskId])
+  @@index([commentId])
+  @@index([uploadedById])
+  @@map("task_attachments")
+}
+
+model TaskActivity {
+  id        String           @id @default(uuid())
+  companyId String
+  taskId    String
+  actorId   String
+  type      TaskActivityType
+  fromValue String?
+  toValue   String?
+  createdAt DateTime         @default(now()) @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  task    Task    @relation(fields: [taskId], references: [id])
+  actor   User    @relation("TaskActivitiesActed", fields: [actorId], references: [id])
+
+  @@index([companyId])
+  @@index([taskId])
+  @@index([actorId])
+  @@map("task_activities")
+}
+
+// ============================================================
+// Notifications, audit, settings
+// ============================================================
+
+model Notification {
+  id         String               @id @default(uuid())
+  companyId  String
+  userId     String
+  category   NotificationCategory
+  title      String
+  body       String
+  linkUrl    String?
+  entityType String?
+  entityId   String?
+  priority   NotificationPriority @default(NORMAL)
+  isRead     Boolean              @default(false)
+  readAt     DateTime?            @db.Timestamptz(6)
+  expiresAt  DateTime?            @db.Timestamptz(6)
+  createdAt  DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime             @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([isRead])
+  @@index([category])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id              String               @id @default(uuid())
+  companyId       String
+  userId          String
+  category        NotificationCategory
+  inAppEnabled    Boolean              @default(true)
+  emailEnabled    Boolean              @default(true)
+  digestFrequency DigestFrequency      @default(IMMEDIATE)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([userId, category])
+  @@index([companyId])
+  @@map("notification_preferences")
+}
+
+model EmailOutbox {
+  id                String            @id @default(uuid())
+  companyId         String
+  toEmail           String
+  templateKey       String
+  payload           Json
+  status            EmailOutboxStatus @default(QUEUED)
+  attemptCount      Int               @default(0)
+  lastError         String?
+  scheduledFor      DateTime          @default(now()) @db.Timestamptz(6)
+  sentAt            DateTime?         @db.Timestamptz(6)
+  providerMessageId String?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("email_outbox")
+}
+
+// Append-only. No updatedAt. Nothing in application code issues
+// UPDATE or DELETE against this table — enforced at the database
+// permission level once the production role is provisioned (§13.2).
+model AuditLog {
+  id          String        @id @default(uuid())
+  companyId   String
+  actorId     String?
+  actorEmail  String?
+  actorRole   Role?
+  action      String
+  entityType  String
+  entityId    String
+  beforeState Json?
+  afterState  Json?
+  ipAddress   String?
+  userAgent   String?
+  sessionId   String?
+  severity    AuditSeverity @default(INFO)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  actor   User?   @relation("AuditLogsAsActor", fields: [actorId], references: [id])
+
+  @@index([companyId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([severity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model CompanySettings {
+  id        String   @id @default(uuid())
+  companyId String
+  key       String
+  value     Json
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, key])
+  @@index([companyId])
+  @@map("company_settings")
+}
+
+// ============================================================
+// Sales Target & Product Assignment (MVP slice — see the module's
+// own spec doc §"Suggested Build Priority": categories 1,2,3,4,5,10,11,20)
+// ============================================================
+
+model Product {
+  id                String   @id @default(uuid())
+  companyId         String
+  name              String
+  sku               String
+  category          String?
+  price             Decimal  @db.Decimal(12, 2)
+  commissionPercent Decimal  @default(0) @db.Decimal(5, 2)
+  description       String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(6)
+
+  company     Company             @relation(fields: [companyId], references: [id])
+  assignments ProductAssignment[]
+  sales       Sale[]
+
+  @@unique([companyId, sku])
+  @@index([companyId])
+  @@map("products")
+}
+
+model ProductAssignment {
+  id         String   @id @default(uuid())
+  companyId  String
+  productId  String
+  userId     String
+  assignedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  user    User    @relation("ProductAssignments", fields: [userId], references: [id])
+
+  @@unique([productId, userId])
+  @@index([companyId])
+  @@index([userId])
+  @@map("product_assignments")
+}
+
+/**
+ * userId XOR departmentId — individual target or team target (§1, items 1-2).
+ */
+model SalesTarget {
+  id           String            @id @default(uuid())
+  companyId    String
+  userId       String?
+  departmentId String?
+  metric       SalesTargetMetric
+  targetValue  Decimal           @db.Decimal(14, 2)
+  period       SalesTargetPeriod
+  startDate    DateTime          @db.Date
+  endDate      DateTime          @db.Date
+  status       SalesTargetStatus @default(ACTIVE)
+  notes        String?
+  createdById  String
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  user       User?       @relation("SalesTargetsAssigned", fields: [userId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  createdBy  User        @relation("SalesTargetsCreated", fields: [createdById], references: [id])
+  sales      Sale[]
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+  @@map("sales_targets")
+}
+
+model Sale {
+  id           String     @id @default(uuid())
+  companyId    String
+  userId       String
+  targetId     String?
+  productId    String?
+  clientName   String
+  amount       Decimal    @db.Decimal(14, 2)
+  quantity     Int        @default(1)
+  saleDate     DateTime   @db.Date
+  source       String?
+  notes        String?
+  status       SaleStatus @default(PENDING)
+  approvedById String?
+  approvedAt   DateTime?  @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+
+  company    Company      @relation(fields: [companyId], references: [id])
+  user       User         @relation("SalesRecorded", fields: [userId], references: [id])
+  target     SalesTarget? @relation(fields: [targetId], references: [id])
+  product    Product?     @relation(fields: [productId], references: [id])
+  approvedBy User?        @relation("SalesApproved", fields: [approvedById], references: [id])
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([targetId])
+  @@index([productId])
+  @@index([status])
+  @@index([saleDate])
+  @@map("sales")
+}
+
+// ============================================================
+// Better Auth tables
+// ============================================================
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime @db.Timestamptz(6)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(uuid())
+  userId                String
+  // Namespaces accountId so a provider's ID can't collide across auth methods —
+  // e.g. "credential" (email/password) vs an OAuth provider added later.
+  issuer                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(6)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(6)
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model TwoFactor {
+  id                      String    @id @default(uuid())
+  userId                  String
+  secret                  String
+  backupCodes             String
+  verified                Boolean   @default(true)
+  failedVerificationCount Int       @default(0)
+  lockedUntil             DateTime? @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([secret])
+  @@map("two_factors")
+}
+
+model Verification {
+  id         String   @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([identifier])
+  @@map("verifications")
+}
